@@ -1,10 +1,552 @@
-{% extends "base.html" %}
-{% block title %}Homework Calendar{% endblock %}
-{% block body_class %}homework-section{% endblock %}
-{% block content %}
-<section class="panel">
-    <h2>Homework Calendar</h2>
-    <p>This calendar shows all homework assignments by their due dates. Click on an assignment to view its details and ask questions.</p>
-    <div id="calendar"></div>
-</section>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colorful Homework Calendar</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary': '#4f46e5',
+                        'secondary': '#f97316', // Orange - for Mathematics
+                        'success': '#10b981', // Green - for Science
+                        'info': '#3b82f6', // Blue - for History
+                        'warning': '#facc15',
+                        'danger': '#ef4444',
+                        'card-bg': '#ffffff',
+                        // New Subject Colors
+                        'lang': '#a855f7', // Purple - Basic Indian Language
+                        'ds': '#14b8a6', // Teal - Data Structure
+                        'fe': '#ec4899', // Pink - Frontend Development
+                        'sec': '#92400e', // Brown - Information Security
+                        'yoga': '#84cc16', // Lime - Integral Yoga
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom styles for the calendar grid */
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+        }
+        .day-cell {
+            padding: 4px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 70px; /* Fixed height for date cells */
+            transition: all 0.15s;
+        }
+        .day-cell:hover:not(.day-name) {
+            background-color: rgba(79, 70, 229, 0.1); /* Primary color light hover */
+        }
+        .date-number {
+            font-weight: 600;
+        }
+        .has-event {
+            position: relative;
+            cursor: pointer;
+        }
+        .event-marker {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-top: 4px;
+        }
+        /* Color mapping for subjects */
+        .event-marker.math { background-color: #f97316; } /* Secondary (Orange) */
+        .event-marker.science { background-color: #10b981; } /* Success (Green) */
+        .event-marker.history { background-color: #3b82f6; } /* Info (Blue) */
+        
+        .event-marker.language { background-color: #a855f7; } /* Lang (Purple) */
+        .event-marker.data-structure { background-color: #14b8a6; } /* DS (Teal) */
+        .event-marker.frontend-development { background-color: #ec4899; } /* FE (Pink) */
+        .event-marker.information-security { background-color: #92400e; } /* Sec (Brown) */
+        .event-marker.integral-yoga { background-color: #84cc16; } /* Yoga (Lime) */
+        /* Placeholder for new subjects added by the 'Add Sample Task' button */
+        .event-marker.mobile-applications { background-color: #4f46e5; } /* Primary (Indigo) */
+        .event-marker.software-engineering { background-color: #facc15; } /* Warning (Yellow) */
+
+
+        .today-highlight {
+            border: 2px solid #ef4444; /* Danger (Red) for today */
+            border-radius: 0.5rem;
+        }
+
+        /* Modal specific styles */
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.6);
+        }
+        .modal-content {
+            animation: slide-down 0.3s ease-out;
+        }
+        @keyframes slide-down {
+            0% { transform: translateY(-50px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8 min-h-screen flex flex-col items-center justify-center">
+
+    <div id="app" class="w-full max-w-5xl bg-card-bg rounded-xl shadow-2xl p-6 md:p-10">
+        <h1 class="text-3xl font-bold text-primary mb-6 text-center">
+            Homework & Assignment Calendar
+        </h1>
+
+        <!-- New Date/Time Box -->
+        <div id="date-time-box" class="mb-8 p-4 bg-primary text-white rounded-xl shadow-xl flex flex-col md:flex-row justify-between items-center transform transition-all hover:scale-[1.01]">
+            <div>
+                <div class="text-xs uppercase font-light opacity-80">Current Date</div>
+                <div id="current-date-display" class="text-xl font-bold"></div>
+            </div>
+            <div class="mt-2 md:mt-0">
+                <div class="text-xs uppercase font-light opacity-80 md:text-right">Current Time</div>
+                <div id="current-time-display" class="text-4xl font-extrabold tracking-tight"></div>
+            </div>
+        </div>
+        
+        <!-- Calendar Controls and Title -->
+        <div class="flex flex-col md:flex-row justify-between items-center mb-6 space-y-4 md:space-y-0">
+            <h2 id="month-year-display" class="text-2xl font-semibold text-gray-800"></h2>
+            
+            <div class="flex space-x-3">
+                <button id="prev-month" class="p-3 bg-secondary text-white rounded-full shadow-lg hover:bg-secondary/90 transition-all active:scale-95 transform">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-left"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <!-- Button to OPEN the New Task Modal -->
+                <button id="add-assignment" class="px-5 py-2 bg-success text-white font-medium rounded-xl shadow-lg hover:bg-success/90 transition-all active:scale-95 transform">
+                    + Add New Task
+                </button>
+                <button id="next-month" class="p-3 bg-secondary text-white rounded-full shadow-lg hover:bg-secondary/90 transition-all active:scale-95 transform">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-right"><path d="m9 18 6-6-6-6"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Weekdays Grid -->
+        <div class="calendar-grid text-sm font-bold text-center mb-2 text-gray-500">
+            <div class="day-cell day-name">SUN</div>
+            <div class="day-cell day-name">MON</div>
+            <div class="day-cell day-name">TUE</div>
+            <div class="day-cell day-name">WED</div>
+            <div class="day-cell day-name">THU</div>
+            <div class="day-cell day-name">FRI</div>
+            <div class="day-cell day-name">SAT</div>
+        </div>
+
+        <!-- Dates Grid (Populated by JS) -->
+        <div id="calendar-dates" class="calendar-grid text-center">
+            <!-- Calendar days will be rendered here -->
+        </div>
+    </div>
+
+    <!-- Modal for viewing Event Details / Notifications -->
+    <div id="event-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay">
+        <div class="bg-card-bg w-11/12 md:w-1/3 p-6 rounded-xl shadow-2xl modal-content">
+            <h3 id="modal-title" class="text-xl font-bold mb-4 text-primary">Assignment Details</h3>
+            <p id="modal-date" class="text-sm text-gray-500 mb-3"></p>
+            <p id="modal-description" class="text-gray-700"></p>
+            <div class="flex justify-end mt-6">
+                <button onclick="closeModal()" class="px-4 py-2 bg-primary text-white rounded-lg shadow-md hover:bg-primary/90 transition-all">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Modal for Adding Tasks (The main update) -->
+    <div id="add-task-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal-overlay">
+        <div class="bg-card-bg w-11/12 md:w-1/3 p-6 rounded-xl shadow-2xl modal-content">
+            <h3 class="text-xl font-bold mb-6 text-success">Schedule New Task</h3>
+            
+            <form id="add-task-form">
+                <!-- Date Input -->
+                <div class="mb-4">
+                    <label for="task-date" class="block text-sm font-medium text-gray-700 mb-1">Due Date</label>
+                    <input type="date" id="task-date" required
+                        class="w-full p-2 border border-gray-300 rounded-lg focus:border-success focus:ring focus:ring-success/50 transition duration-150">
+                </div>
+
+                <!-- Subject Select -->
+                <div class="mb-4">
+                    <label for="task-subject" class="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                    <select id="task-subject" required
+                        class="w-full p-2 border border-gray-300 rounded-lg bg-white focus:border-success focus:ring focus:ring-success/50 transition duration-150">
+                        <!-- Options populated by JavaScript -->
+                    </select>
+                </div>
+
+                <!-- Title Input -->
+                <div class="mb-6">
+                    <label for="task-title" class="block text-sm font-medium text-gray-700 mb-1">Task Title/Description</label>
+                    <input type="text" id="task-title" placeholder="e.g., Final report on AI ethics" required
+                        class="w-full p-2 border border-gray-300 rounded-lg focus:border-success focus:ring focus:ring-success/50 transition duration-150">
+                </div>
+
+                <div class="flex justify-end space-x-3">
+                    <button type="button" onclick="closeAddTaskModal()" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-100 transition-all">
+                        Cancel
+                    </button>
+                    <button type="submit" class="px-4 py-2 bg-success text-white rounded-lg shadow-md hover:bg-success/90 transition-all active:scale-95">
+                        Add Task
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- CALENDAR STATE & DATA ---
+        let currentMonth = new Date().getMonth();
+        let currentYear = new Date().getFullYear();
+        const today = new Date();
+
+        const monthNames = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ];
+
+        // Map subject keys to their full names and Tailwind color classes
+        const subjectMap = {
+            'language': { name: 'Basic Indian Language', colorClass: 'bg-lang text-lang-900' },
+            'data-structure': { name: 'Data Structure', colorClass: 'bg-ds text-ds-900' },
+            'frontend-development': { name: 'Frontend Development', colorClass: 'bg-fe text-fe-900' },
+            'information-security': { name: 'Information Security', colorClass: 'bg-sec text-sec-900' },
+            'integral-yoga': { name: 'Integral Yoga', colorClass: 'bg-yoga text-yoga-900' },
+            'math': { name: 'Mathematics', colorClass: 'bg-secondary text-secondary-900' },
+            'science': { name: 'Science', colorClass: 'bg-success text-success-900' },
+            'history': { name: 'History', colorClass: 'bg-info text-info-900' },
+            'mobile-applications': { name: 'Mobile Applications', colorClass: 'bg-primary text-primary-900' },
+            'software-engineering': { name: 'Software Engineering', colorClass: 'bg-warning text-warning-900' },
+        };
+        
+        // Sample assignment data (using Date objects for easy comparison)
+        const assignments = [
+            { id: 1, title: "Math: Calculus Review", date: new Date(currentYear, currentMonth, 5), subject: "math" },
+            { id: 2, title: "DS: Project Phase 1 Due", date: new Date(currentYear, currentMonth, 12), subject: "data-structure" },
+            { id: 3, title: "FE: Responsive Design Quiz", date: new Date(currentYear, currentMonth, 20), subject: "frontend-development" },
+            { id: 4, title: "Language: Chapter 3 Reading", date: new Date(currentYear, currentMonth, 25), subject: "language" },
+            { id: 5, title: "History: Essay on Roman Empire", date: new Date(currentYear, currentMonth + 1, 5), subject: "history" },
+            { id: 6, title: "InfoSec: Network Protocol Exam", date: new Date(currentYear, currentMonth + 1, 15), subject: "information-security" },
+            { id: 7, title: "Yoga: Theory Assignment", date: new Date(currentYear, currentMonth + 2, 2), subject: "integral-yoga" },
+            { id: 8, title: "SE: Requirements Gathering", date: new Date(currentYear, currentMonth + 1, 15), subject: "software-engineering" },
+        ];
+        
+        // --- DOM ELEMENTS ---
+        const monthYearDisplay = document.getElementById('month-year-display');
+        const calendarDatesContainer = document.getElementById('calendar-dates');
+        const prevMonthBtn = document.getElementById('prev-month');
+        const nextMonthBtn = document.getElementById('next-month');
+        const addAssignmentBtn = document.getElementById('add-assignment'); // Now opens the task modal
+        
+        // Event Detail Modal elements
+        const eventModal = document.getElementById('event-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalDate = document.getElementById('modal-date');
+        const modalDescription = document.getElementById('modal-description');
+        
+        // Add Task Modal elements
+        const addTaskModal = document.getElementById('add-task-modal');
+        const taskForm = document.getElementById('add-task-form');
+        const taskDateInput = document.getElementById('task-date');
+        const taskSubjectSelect = document.getElementById('task-subject');
+        const taskTitleInput = document.getElementById('task-title');
+        
+        // Date/Time elements
+        const currentDateDisplay = document.getElementById('current-date-display');
+        const currentTimeDisplay = document.getElementById('current-time-display');
+
+        // --- MODAL CONTROLS ---
+
+        /**
+         * Closes the Event Details/Notification modal.
+         */
+        function closeModal() {
+            eventModal.classList.add('hidden');
+        }
+
+        /**
+         * Shows the Event Details/Notification modal.
+         */
+        function showModal(title, dateStr, description) {
+            modalTitle.textContent = title;
+            modalDate.textContent = dateStr;
+            modalDescription.innerHTML = description;
+            eventModal.classList.remove('hidden');
+        }
+
+        /**
+         * Opens the Add Task form modal.
+         */
+        function openAddTaskModal() {
+            // Set default date to today
+            const yyyy = today.getFullYear();
+            let mm = today.getMonth() + 1; // Months start at 0
+            let dd = today.getDate();
+            
+            if (mm < 10) mm = '0' + mm;
+            if (dd < 10) dd = '0' + dd;
+
+            taskDateInput.value = `${yyyy}-${mm}-${dd}`;
+            taskTitleInput.value = '';
+            taskSubjectSelect.value = ''; // Reset dropdown
+            addTaskModal.classList.remove('hidden');
+        }
+
+        /**
+         * Closes the Add Task form modal.
+         */
+        function closeAddTaskModal() {
+            addTaskModal.classList.add('hidden');
+        }
+
+        // --- TASK MANAGEMENT LOGIC ---
+
+        /**
+         * Dynamically populates the subject dropdown.
+         */
+        function populateSubjectDropdown() {
+            taskSubjectSelect.innerHTML = '';
+            // Add a default prompt option
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = 'Select Subject';
+            defaultOption.disabled = true;
+            defaultOption.selected = true;
+            taskSubjectSelect.appendChild(defaultOption);
+
+            for (const key in subjectMap) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = subjectMap[key].name;
+                taskSubjectSelect.appendChild(option);
+            }
+        }
+        
+        /**
+         * Handles form submission for adding a new task.
+         */
+        function handleAddTask(e) {
+            e.preventDefault();
+
+            const dateStr = taskDateInput.value;
+            const subjectKey = taskSubjectSelect.value;
+            const title = taskTitleInput.value.trim();
+
+            if (!dateStr || !subjectKey || !title) {
+                showModal("Input Error", "", "Please ensure you have selected a date, selected a subject, and entered a task title.");
+                return;
+            }
+
+            // Create a new Date object from the YYYY-MM-DD string
+            const taskDate = new Date(dateStr);
+            
+            const newAssignment = { 
+                id: assignments.length + 1, 
+                title: title, 
+                date: taskDate, 
+                subject: subjectKey
+            };
+
+            assignments.push(newAssignment);
+            
+            closeAddTaskModal();
+            renderCalendar();
+
+            // Show confirmation in the main event modal
+            const subjectName = subjectMap[subjectKey].name;
+            showModal("Task Successfully Added!", taskDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), 
+                     `The task **"${title}"** for **${subjectName}** has been scheduled on the calendar.`);
+        }
+
+
+        // --- CALENDAR & CLOCK FUNCTIONS (Remains mostly the same) ---
+
+        /**
+         * Updates the digital clock display with the current date and time.
+         */
+        function updateClock() {
+            const now = new Date();
+            const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
+
+            currentDateDisplay.textContent = now.toLocaleDateString('en-US', dateOptions);
+            currentTimeDisplay.textContent = now.toLocaleTimeString('en-US', timeOptions);
+        }
+
+        /**
+         * Checks if a specific day/month/year combination matches the assignment date.
+         */
+        function getAssignmentsForDate(day, month, year) {
+            return assignments.filter(assignment => 
+                assignment.date.getDate() === day &&
+                assignment.date.getMonth() === month &&
+                assignment.date.getFullYear() === year
+            );
+        }
+
+        /**
+         * Renders the calendar grid for the currentMonth and currentYear.
+         */
+        function renderCalendar() {
+            // Get data for the current month view
+            const firstDay = new Date(currentYear, currentMonth, 1).getDay(); // 0=Sun, 6=Sat
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const daysInPrevMonth = new Date(currentYear, currentMonth, 0).getDate();
+
+            monthYearDisplay.textContent = `${monthNames[currentMonth]} ${currentYear}`;
+            calendarDatesContainer.innerHTML = ''; // Clear existing dates
+
+            // 1. Render previous month's inactive days
+            for (let i = firstDay; i > 0; i--) {
+                const date = daysInPrevMonth - i + 1;
+                const cell = createDayCell(date, 'inactive');
+                calendarDatesContainer.appendChild(cell);
+            }
+
+            // 2. Render current month's active days
+            for (let i = 1; i <= daysInMonth; i++) {
+                const cell = createDayCell(i, 'current', currentMonth, currentYear);
+                calendarDatesContainer.appendChild(cell);
+            }
+
+            // 3. Render next month's inactive days
+            const totalCellsRendered = firstDay + daysInMonth;
+            const remainingCells = 42 - totalCellsRendered;
+            
+            for (let i = 1; i <= remainingCells && totalCellsRendered + i <= 42; i++) {
+                const cell = createDayCell(i, 'inactive');
+                calendarDatesContainer.appendChild(cell);
+            }
+        }
+
+        /**
+         * Creates a single day cell element.
+         */
+        function createDayCell(dayNumber, type, month = null, year = null) {
+            const cell = document.createElement('div');
+            
+            let classes = "day-cell rounded-lg border border-gray-200 text-gray-700 relative";
+            let dateStr = "";
+            let assignmentsOnDay = [];
+            
+            if (type === 'inactive') {
+                classes += " bg-gray-50 text-gray-400 cursor-default";
+            } else {
+                assignmentsOnDay = getAssignmentsForDate(dayNumber, month, year);
+                
+                if (dayNumber === today.getDate() && month === today.getMonth() && year === today.getFullYear()) {
+                    classes += " today-highlight bg-danger/10";
+                } else {
+                    classes += " bg-card-bg shadow-sm";
+                }
+
+                if (assignmentsOnDay.length > 0) {
+                    classes += " has-event";
+                }
+                dateStr = `${monthNames[month]} ${dayNumber}, ${year}`;
+            }
+
+            cell.className = classes;
+            cell.innerHTML = `<span class="date-number">${dayNumber}</span>`;
+
+            if (assignmentsOnDay.length > 0) {
+                // Add event markers
+                assignmentsOnDay.forEach(assignment => {
+                    const subjectClass = assignment.subject.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                    const marker = document.createElement('div');
+                    marker.className = `event-marker ${subjectClass} w-1.5 h-1.5`;
+                    cell.appendChild(marker);
+                });
+
+                // Attach click listener to show modal
+                cell.addEventListener('click', () => {
+                    const assignmentListHtml = assignmentsOnDay.map(a => {
+                        const subjectInfo = subjectMap[a.subject.toLowerCase()] || { name: a.subject, colorClass: 'bg-gray-400' };
+                        const subjectName = subjectInfo.name;
+                        
+                        let colorKey = a.subject;
+                        if (colorKey === 'data-structure') colorKey = 'ds';
+                        else if (colorKey === 'frontend-development') colorKey = 'fe';
+                        else if (colorKey === 'information-security') colorKey = 'sec';
+                        else if (colorKey === 'integral-yoga') colorKey = 'yoga';
+                        
+                        return `<p class="text-sm my-1 p-2 rounded-md bg-${colorKey}/10 text-gray-900 border-l-4 border-${colorKey}-500">
+                            <span class="font-semibold">${a.title}</span> 
+                            (<span class="font-medium">${subjectName}</span>)
+                        </p>`;
+                    }).join('');
+
+                    showModal(`Assignments Due on ${dayNumber} ${monthNames[month]}`, dateStr, assignmentListHtml);
+                });
+            }
+
+            return cell;
+        }
+
+        // --- EVENT LISTENERS ---
+
+        /**
+         * Handles moving to the previous month.
+         */
+        prevMonthBtn.addEventListener('click', () => {
+            currentMonth--;
+            if (currentMonth < 0) {
+                currentMonth = 11;
+                currentYear--;
+            }
+            renderCalendar();
+        });
+
+        /**
+         * Handles moving to the next month.
+         */
+        nextMonthBtn.addEventListener('click', () => {
+            currentMonth++;
+            if (currentMonth > 11) {
+                currentMonth = 0;
+                currentYear++;
+            }
+            renderCalendar();
+        });
+
+        // Event listener to open the task form modal
+        addAssignmentBtn.addEventListener('click', openAddTaskModal);
+        
+        // Event listener for the form submission
+        if (taskForm) {
+            taskForm.addEventListener('submit', handleAddTask);
+        }
+
+        // Close modal when clicking outside
+        eventModal.addEventListener('click', (e) => {
+            if (e.target === eventModal) {
+                closeModal();
+            }
+        });
+        addTaskModal.addEventListener('click', (e) => {
+            if (e.target === addTaskModal) {
+                closeAddTaskModal();
+            }
+        });
+
+        // --- INITIALIZATION ---
+        
+        updateClock();
+        setInterval(updateClock, 1000);
+        
+        // Populate the subject dropdown on load
+        populateSubjectDropdown();
+        
+        window.onload = renderCalendar;
+
+    </script>
+
+</body>
+</html>
