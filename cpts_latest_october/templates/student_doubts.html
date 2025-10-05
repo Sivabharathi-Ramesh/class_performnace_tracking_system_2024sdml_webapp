@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+{% block title %}My Doubts{% endblock %}
+{% block body_class %}homework-section{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>My Doubts & Questions</h2>
+
+  <div class="form-row">
+    <label for="homeworkFilter">Filter by Homework:</label>
+    <select id="homeworkFilter">
+      <option value="">All Homework</option>
+    </select>
+    <button id="filterBtn" class="btn">Filter</button>
+  </div>
+
+  <div id="doubtsArea" style="margin-top: 30px;"></div>
+</section>
+
+<div id="askDoubtModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <h2>Ask a Question</h2>
+    <form id="askDoubtForm">
+      <div class="form-row">
+        <label for="homeworkSelect">Select Homework:</label>
+        <select id="homeworkSelect" required></select>
+      </div>
+      <div class="form-row">
+        <label for="questionText">Your Question:</label>
+        <textarea id="questionText" rows="5" required></textarea>
+      </div>
+      <button type="submit" class="btn">Submit Question</button>
+    </form>
+  </div>
+</div>
+
+<button id="askDoubtBtn" class="floating-action-btn" title="Ask a Question">+</button>
+
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+  try {
+    const response = await fetch('/api/homework');
+    const homeworks = await response.json();
+
+    const homeworkFilter = document.getElementById('homeworkFilter');
+    const homeworkSelect = document.getElementById('homeworkSelect');
+
+    homeworks.forEach(hw => {
+      const optFilter = document.createElement('option');
+      optFilter.value = hw.id;
+      optFilter.textContent = `${hw.subject} - ${hw.title}`;
+      homeworkFilter.appendChild(optFilter);
+
+      const optSelect = document.createElement('option');
+      optSelect.value = hw.id;
+      optSelect.textContent = `${hw.subject} - ${hw.title}`;
+      homeworkSelect.appendChild(optSelect);
+    });
+
+    await loadDoubts();
+  } catch (error) {
+    console.error('Error loading page:', error);
+  }
+});
+
+document.getElementById('filterBtn').addEventListener('click', loadDoubts);
+
+async function loadDoubts() {
+  const homeworkId = document.getElementById('homeworkFilter').value;
+  const params = new URLSearchParams();
+  if (homeworkId) params.append('homework_id', homeworkId);
+
+  try {
+    const response = await fetch(`/api/student/doubts?${params}`);
+    const data = await response.json();
+
+    if (data.ok) {
+      displayDoubts(data.doubts);
+    } else {
+      document.getElementById('doubtsArea').innerHTML = '<p>Error loading doubts.</p>';
+    }
+  } catch (error) {
+    console.error('Error fetching doubts:', error);
+  }
+}
+
+function displayDoubts(doubts) {
+  const area = document.getElementById('doubtsArea');
+
+  if (doubts.length === 0) {
+    area.innerHTML = '<p style="text-align: center; padding: 20px;">No questions asked yet. Click the + button to ask a question!</p>';
+    return;
+  }
+
+  let html = '<div class="doubts-list">';
+
+  doubts.forEach(doubt => {
+    const answered = doubt.answer ? 'answered' : 'pending';
+    html += `
+      <div class="doubt-item ${answered}">
+        <div class="doubt-header">
+          <span class="homework-title">${doubt.homework_title}</span>
+          <span class="doubt-date">${doubt.asked_date}</span>
+        </div>
+        <div class="doubt-question">
+          <strong>Q:</strong> ${doubt.question}
+        </div>
+        ${doubt.answer ? `
+          <div class="doubt-answer">
+            <strong>A:</strong> ${doubt.answer}
+            <span class="answered-date">Answered: ${doubt.answered_date || 'N/A'}</span>
+          </div>
+        ` : `
+          <div class="doubt-pending-notice">
+            Waiting for teacher's response...
+          </div>
+        `}
+        <div class="doubt-actions">
+          <button class="btn-small btn-edit" onclick="editDoubt(${doubt.id}, '${doubt.question.replace(/'/g, "\\'")}')">Edit</button>
+          <button class="btn-small btn-delete" onclick="deleteDoubt(${doubt.id})">Delete</button>
+        </div>
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  area.innerHTML = html;
+}
+
+const modal = document.getElementById('askDoubtModal');
+document.getElementById('askDoubtBtn').addEventListener('click', () => {
+  modal.style.display = 'block';
+});
+
+document.querySelector('.close').addEventListener('click', () => {
+  modal.style.display = 'none';
+});
+
+document.getElementById('askDoubtForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+
+  const homeworkId = document.getElementById('homeworkSelect').value;
+  const question = document.getElementById('questionText').value;
+
+  try {
+    const response = await fetch('/api/student/ask_doubt', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({homework_id: homeworkId, question: question})
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      alert('Question submitted successfully!');
+      modal.style.display = 'none';
+      document.getElementById('askDoubtForm').reset();
+      await loadDoubts();
+    } else {
+      alert(data.message || 'Error submitting question.');
+    }
+  } catch (error) {
+    console.error('Error submitting doubt:', error);
+    alert('Error submitting question.');
+  }
+});
+
+async function editDoubt(doubtId, currentQuestion) {
+  const newQuestion = prompt('Edit your question:', currentQuestion);
+  if (!newQuestion || newQuestion === currentQuestion) return;
+
+  try {
+    const response = await fetch(`/api/doubts/${doubtId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: newQuestion})
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      alert('Question updated successfully!');
+      await loadDoubts();
+    } else {
+      alert('Error updating question.');
+    }
+  } catch (error) {
+    console.error('Error updating doubt:', error);
+    alert('Error updating question.');
+  }
+}
+
+async function deleteDoubt(doubtId) {
+  if (!confirm('Are you sure you want to delete this question?')) return;
+
+  try {
+    const response = await fetch(`/api/doubts/${doubtId}`, {method: 'DELETE'});
+    const data = await response.json();
+
+    if (data.ok) {
+      alert('Question deleted successfully!');
+      await loadDoubts();
+    } else {
+      alert('Error deleting question.');
+    }
+  } catch (error) {
+    console.error('Error deleting doubt:', error);
+    alert('Error deleting question.');
+  }
+}
+</script>
+
+<style>
+.doubts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.doubt-item {
+  background: white;
+  border-left: 4px solid #667eea;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.doubt-item.pending {
+  border-left-color: #ffc107;
+}
+
+.doubt-item.answered {
+  border-left-color: #28a745;
+}
+
+.doubt-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.homework-title {
+  font-weight: 600;
+  color: #667eea;
+}
+
+.doubt-date {
+  font-size: 0.9em;
+  color: #666;
+}
+
+.doubt-question {
+  margin: 15px 0;
+  line-height: 1.6;
+}
+
+.doubt-answer {
+  background: #f0f8ff;
+  padding: 15px;
+  border-radius: 5px;
+  margin: 15px 0;
+  line-height: 1.6;
+}
+
+.answered-date {
+  display: block;
+  font-size: 0.85em;
+  color: #666;
+  margin-top: 10px;
+}
+
+.doubt-pending-notice {
+  background: #fff3cd;
+  padding: 10px;
+  border-radius: 5px;
+  color: #856404;
+  font-style: italic;
+  margin: 15px 0;
+}
+
+.doubt-actions {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+}
+
+.btn-small {
+  padding: 5px 15px;
+  font-size: 0.85em;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-edit {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-edit:hover {
+  background: #138496;
+}
+
+.btn-delete {
+  background: #dc3545;
+  color: white;
+}
+
+.btn-delete:hover {
+  background: #c82333;
+}
+
+.floating-action-btn {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #667eea;
+  color: white;
+  font-size: 2em;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+  transition: all 0.3s;
+}
+
+.floating-action-btn:hover {
+  background: #764ba2;
+  transform: scale(1.1);
+}
+
+.modal {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+  background-color: white;
+  margin: 10% auto;
+  padding: 30px;
+  border-radius: 8px;
+  width: 80%;
+  max-width: 600px;
+}
+
+.close {
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: #f5576c;
+}
+</style>
+{% endblock %}

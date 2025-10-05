@@ -161,7 +161,27 @@ def logout():
 @app.route("/")
 @login_required
 def home():
+    if session['role'] == 'student':
+        return redirect(url_for('student_dashboard'))
+    elif session['role'] == 'teacher':
+        return redirect(url_for('teacher_dashboard'))
     return render_template("new_home.html", page="home")
+
+@app.route("/student/dashboard")
+@login_required
+@role_required('student')
+def student_dashboard():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id, exercism_username FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    exercism_username = student['exercism_username'] if student else None
+    return render_template("student_dashboard.html", page="student_dashboard", exercism_username=exercism_username)
+
+@app.route("/teacher/dashboard")
+@login_required
+@role_required('teacher')
+def teacher_dashboard():
+    return render_template("teacher_dashboard.html", page="teacher_dashboard")
 
 @app.route("/attendance")
 @login_required
@@ -171,11 +191,37 @@ def attendance_home():
 @app.route("/store")
 @login_required
 def store():
-    # UPDATED: This now blocks students
     if session['role'] == 'student':
         flash("You do not have permission to access this page.", "danger")
         return redirect(url_for('home'))
     return render_template("store.html", page="store")
+
+@app.route("/student/attendance")
+@login_required
+@role_required('student')
+def student_attendance_view():
+    return render_template("student_attendance.html", page="student_attendance")
+
+@app.route("/student/doubts")
+@login_required
+@role_required('student')
+def student_doubts():
+    return render_template("student_doubts.html", page="student_doubts")
+
+@app.route("/teacher/doubts")
+@login_required
+def teacher_doubts_list():
+    if session['role'] == 'student':
+        return redirect(url_for('student_doubts'))
+    return render_template("teacher_doubts.html", page="teacher_doubts")
+
+@app.route("/teacher/analytics")
+@login_required
+def teacher_analytics():
+    if session['role'] == 'student':
+        flash("You do not have permission to access this page.", "danger")
+        return redirect(url_for('home'))
+    return render_template("teacher_analytics.html", page="teacher_analytics")
 
 @app.route("/view")
 @login_required
@@ -520,6 +566,473 @@ def delete_user(user_id):
     db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     db.commit()
     return jsonify({"ok": True})
+
+# Student API Routes
+@app.route("/api/student/dashboard_stats")
+@login_required
+@role_required('student')
+def api_student_dashboard_stats():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "error": "Student profile not found"}), 404
+    student_id = student['id']
+
+    homework_stats = db.execute("""
+        SELECT
+            SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'Submitted' THEN 1 ELSE 0 END) as submitted,
+            SUM(CASE WHEN status = 'Graded' THEN 1 ELSE 0 END) as graded
+        FROM homework_submissions WHERE student_id = ?
+    """, (student_id,)).fetchone()
+
+    attendance_stats = db.execute("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'Present' THEN 1 ELSE 0 END) as present
+        FROM attendance WHERE student_id = ?
+    """, (student_id,)).fetchone()
+
+    doubts_stats = db.execute("""
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN answer IS NOT NULL AND answer != '' THEN 1 ELSE 0 END) as answered
+        FROM doubts WHERE student_id = ?
+    """, (student_id,)).fetchone()
+
+    attendance_percentage = 0
+    if attendance_stats['total'] > 0:
+        attendance_percentage = round((attendance_stats['present'] / attendance_stats['total']) * 100, 1)
+
+    return jsonify({
+        "ok": True,
+        "homework": {
+            "pending": homework_stats['pending'] or 0,
+            "submitted": homework_stats['submitted'] or 0,
+            "graded": homework_stats['graded'] or 0
+        },
+        "attendance": {
+            "total": attendance_stats['total'] or 0,
+            "present": attendance_stats['present'] or 0,
+            "percentage": attendance_percentage
+        },
+        "doubts": {
+            "total": doubts_stats['total'] or 0,
+            "answered": doubts_stats['answered'] or 0,
+            "pending": (doubts_stats['total'] or 0) - (doubts_stats['answered'] or 0)
+        }
+    })
+
+@app.route("/api/student/attendance")
+@login_required
+@role_required('student')
+def api_student_attendance():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "error": "Student profile not found"}), 404
+    student_id = student['id']
+
+    subject_id = request.args.get('subject_id', type=int)
+    month = request.args.get('month', type=str)
+    year = request.args.get('year', type=str)
+
+    query = "SELECT a.date, s.name as subject, a.status FROM attendance a JOIN subjects s ON a.subject_id = s.id WHERE a.student_id = ?"
+    params = [student_id]
+
+    if subject_id:
+        query += " AND a.subject_id = ?"
+        params.append(subject_id)
+    if month and year:
+        query += " AND substr(a.date, 4, 2) = ? AND substr(a.date, 7, 4) = ?"
+        params.extend([month.zfill(2), year])
+    elif year:
+        query += " AND substr(a.date, 7, 4) = ?"
+        params.append(year)
+
+    query += " ORDER BY substr(a.date,7,4)||'-'||substr(a.date,4,2)||'-'||substr(a.date,1,2) DESC"
+    records = db.execute(query, params).fetchall()
+
+    summary_query = """
+        SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'Present' THEN 1 ELSE 0 END) as present,
+            SUM(CASE WHEN status = 'Absent Informed' THEN 1 ELSE 0 END) as absent_informed,
+            SUM(CASE WHEN status = 'Absent Uninformed' THEN 1 ELSE 0 END) as absent_uninformed
+        FROM attendance WHERE student_id = ?
+    """
+    summary_params = [student_id]
+
+    if subject_id:
+        summary_query += " AND subject_id = ?"
+        summary_params.append(subject_id)
+    if month and year:
+        summary_query += " AND substr(date, 4, 2) = ? AND substr(date, 7, 4) = ?"
+        summary_params.extend([month.zfill(2), year])
+    elif year:
+        summary_query += " AND substr(date, 7, 4) = ?"
+        summary_params.append(year)
+
+    summary = db.execute(summary_query, summary_params).fetchone()
+    percentage = 0
+    if summary['total'] > 0:
+        percentage = round((summary['present'] / summary['total']) * 100, 1)
+
+    return jsonify({
+        "ok": True,
+        "records": [dict(r) for r in records],
+        "summary": {
+            "total": summary['total'],
+            "present": summary['present'],
+            "absent_informed": summary['absent_informed'],
+            "absent_uninformed": summary['absent_uninformed'],
+            "percentage": percentage
+        }
+    })
+
+@app.route("/api/student/doubts")
+@login_required
+@role_required('student')
+def api_student_doubts():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "error": "Student profile not found"}), 404
+    student_id = student['id']
+
+    homework_id = request.args.get('homework_id', type=int)
+    query = "SELECT d.id, d.question, d.answer, d.asked_date, h.title as homework_title FROM doubts d JOIN homework h ON d.homework_id = h.id WHERE d.student_id = ?"
+    params = [student_id]
+
+    if homework_id:
+        query += " AND d.homework_id = ?"
+        params.append(homework_id)
+
+    query += " ORDER BY d.asked_date DESC"
+    doubts = db.execute(query, params).fetchall()
+
+    return jsonify({"ok": True, "doubts": [dict(d) for d in doubts]})
+
+@app.route("/api/student/ask_doubt", methods=["POST"])
+@login_required
+@role_required('student')
+def api_student_ask_doubt():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "message": "Student profile not found"}), 404
+    student_id = student['id']
+
+    data = request.get_json()
+    homework_id = data.get('homework_id')
+    question = data.get('question')
+
+    if not homework_id or not question:
+        return jsonify({"ok": False, "message": "Missing required fields"}), 400
+
+    asked_date = datetime.now().strftime("%d-%m-%Y %H:%M")
+    db.execute("INSERT INTO doubts (homework_id, student_id, question, asked_date) VALUES (?, ?, ?, ?)",
+               (homework_id, student_id, question, asked_date))
+    db.commit()
+
+    return jsonify({"ok": True, "message": "Question submitted successfully!"})
+
+@app.route("/api/homework")
+@login_required
+def api_get_homework():
+    db = get_db()
+    homeworks = db.execute("""
+        SELECT h.id, h.title, s.name as subject
+        FROM homework h
+        JOIN subjects s ON h.subject_id = s.id
+        ORDER BY h.posted_date DESC
+    """).fetchall()
+    return jsonify([dict(hw) for hw in homeworks])
+
+# Teacher API Routes
+@app.route("/api/teacher/dashboard_stats")
+@login_required
+def api_teacher_dashboard_stats():
+    if session['role'] == 'student':
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    db = get_db()
+    students_count = db.execute("SELECT COUNT(*) as count FROM students").fetchone()['count']
+    subjects_count = db.execute("SELECT COUNT(*) as count FROM subjects").fetchone()['count']
+
+    active_homeworks = db.execute("""
+        SELECT COUNT(*) as count FROM homework
+        WHERE substr(due_date,7,4)||'-'||substr(due_date,4,2)||'-'||substr(due_date,1,2) >= date('now')
+    """).fetchone()['count']
+
+    today = datetime.now().strftime("%d-%m-%Y")
+    today_classes = db.execute("SELECT COUNT(DISTINCT subject_id) as count FROM subjects").fetchone()['count']
+    classes_marked = db.execute("SELECT COUNT(DISTINCT subject_id) as count FROM attendance WHERE date = ?", (today,)).fetchone()['count']
+
+    pending_submissions = db.execute("SELECT COUNT(*) as count FROM homework_submissions WHERE status = 'Pending'").fetchone()['count']
+    to_grade = db.execute("SELECT COUNT(*) as count FROM homework_submissions WHERE status = 'Submitted'").fetchone()['count']
+
+    unanswered_doubts = db.execute("SELECT COUNT(*) as count FROM doubts WHERE answer IS NULL OR answer = ''").fetchone()['count']
+    total_doubts = db.execute("SELECT COUNT(*) as count FROM doubts").fetchone()['count']
+
+    return jsonify({
+        "ok": True,
+        "students": {"total": students_count},
+        "subjects": {"total": subjects_count},
+        "homework": {
+            "active": active_homeworks,
+            "pending_submissions": pending_submissions,
+            "to_grade": to_grade
+        },
+        "attendance": {
+            "today_classes": today_classes,
+            "marked": classes_marked
+        },
+        "doubts": {
+            "unanswered": unanswered_doubts,
+            "total": total_doubts
+        }
+    })
+
+@app.route("/api/teacher/doubts")
+@login_required
+def api_teacher_doubts():
+    if session['role'] == 'student':
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    db = get_db()
+    status = request.args.get('status', 'all')
+    homework_id = request.args.get('homework_id', type=int)
+
+    query = """
+        SELECT d.id, d.question, d.answer, d.asked_date,
+               s.name as student_name, h.title as homework_title
+        FROM doubts d
+        JOIN students s ON d.student_id = s.id
+        JOIN homework h ON d.homework_id = h.id
+        WHERE 1=1
+    """
+    params = []
+
+    if status == 'unanswered':
+        query += " AND (d.answer IS NULL OR d.answer = '')"
+    elif status == 'answered':
+        query += " AND d.answer IS NOT NULL AND d.answer != ''"
+
+    if homework_id:
+        query += " AND d.homework_id = ?"
+        params.append(homework_id)
+
+    query += " ORDER BY d.asked_date DESC"
+    doubts = db.execute(query, params).fetchall()
+
+    total = len(doubts)
+    answered = sum(1 for d in doubts if d['answer'])
+    unanswered = total - answered
+
+    return jsonify({
+        "ok": True,
+        "doubts": [dict(d) for d in doubts],
+        "stats": {
+            "total": total,
+            "answered": answered,
+            "unanswered": unanswered
+        }
+    })
+
+@app.route("/api/teacher/analytics")
+@login_required
+def api_teacher_analytics():
+    if session['role'] == 'student':
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    db = get_db()
+
+    attendance_data = db.execute("""
+        SELECT
+            SUM(CASE WHEN status = 'Present' THEN 1 ELSE 0 END) as present,
+            SUM(CASE WHEN status = 'Absent Informed' THEN 1 ELSE 0 END) as absent_informed,
+            SUM(CASE WHEN status = 'Absent Uninformed' THEN 1 ELSE 0 END) as absent_uninformed
+        FROM attendance
+    """).fetchone()
+
+    homework_data = db.execute("""
+        SELECT
+            SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending,
+            SUM(CASE WHEN status = 'Submitted' THEN 1 ELSE 0 END) as submitted,
+            SUM(CASE WHEN status = 'Graded' THEN 1 ELSE 0 END) as graded
+        FROM homework_submissions
+    """).fetchone()
+
+    subjects_data = db.execute("""
+        SELECT
+            s.name,
+            COUNT(DISTINCT a.date) as classes,
+            COUNT(DISTINCT CASE WHEN a.status = 'Present' THEN a.student_id END) * 100.0 / NULLIF(COUNT(*), 0) as avg_attendance,
+            COUNT(DISTINCT h.id) as homeworks_count,
+            AVG(hs.grade) as avg_grade,
+            COUNT(DISTINCT CASE WHEN d.answer IS NULL OR d.answer = '' THEN d.id END) as pending_doubts
+        FROM subjects s
+        LEFT JOIN attendance a ON s.id = a.subject_id
+        LEFT JOIN homework h ON s.id = h.subject_id
+        LEFT JOIN homework_submissions hs ON h.id = hs.homework_id
+        LEFT JOIN doubts d ON h.id = d.homework_id
+        GROUP BY s.id, s.name
+    """).fetchall()
+
+    total_classes = db.execute("SELECT COUNT(DISTINCT date || subject_id) as count FROM attendance").fetchone()['count']
+    total_homeworks = db.execute("SELECT COUNT(*) as count FROM homework").fetchone()['count']
+    avg_grade = db.execute("SELECT AVG(grade) as avg FROM homework_submissions WHERE grade IS NOT NULL").fetchone()['avg']
+
+    total_attendance = attendance_data['present'] + attendance_data['absent_informed'] + attendance_data['absent_uninformed']
+    avg_attendance = 0
+    if total_attendance > 0:
+        avg_attendance = round((attendance_data['present'] / total_attendance) * 100, 1)
+
+    low_performers = db.execute("""
+        SELECT s.name, s.roll_no,
+               COUNT(DISTINCT CASE WHEN a.status = 'Present' THEN a.id END) * 100.0 / NULLIF(COUNT(DISTINCT a.id), 0) as attendance_pct,
+               AVG(hs.grade) as avg_grade
+        FROM students s
+        LEFT JOIN attendance a ON s.id = a.student_id
+        LEFT JOIN homework_submissions hs ON s.id = hs.student_id
+        GROUP BY s.id, s.name, s.roll_no
+        HAVING attendance_pct < 75 OR avg_grade < 60
+    """).fetchall()
+
+    low_performers_list = []
+    for student in low_performers:
+        reasons = []
+        if student['attendance_pct'] and student['attendance_pct'] < 75:
+            reasons.append(f"Low attendance: {student['attendance_pct']:.1f}%")
+        if student['avg_grade'] and student['avg_grade'] < 60:
+            reasons.append(f"Low grades: {student['avg_grade']:.1f}")
+        low_performers_list.append({
+            "name": student['name'],
+            "roll_no": student['roll_no'],
+            "reasons": reasons
+        })
+
+    return jsonify({
+        "ok": True,
+        "attendance": dict(attendance_data),
+        "homework": dict(homework_data),
+        "subjects": [{
+            "name": s['name'],
+            "avg_attendance": round(s['avg_attendance'] or 0, 1),
+            "homeworks_count": s['homeworks_count'] or 0,
+            "avg_grade": round(s['avg_grade'] or 0, 1) if s['avg_grade'] else None,
+            "pending_doubts": s['pending_doubts'] or 0
+        } for s in subjects_data],
+        "overall": {
+            "total_classes": total_classes,
+            "total_homeworks": total_homeworks,
+            "avg_attendance": avg_attendance,
+            "avg_grade": round(avg_grade, 1) if avg_grade else None
+        },
+        "low_performers": low_performers_list
+    })
+
+@app.route("/api/teacher/performance")
+@login_required
+def api_teacher_performance():
+    if session['role'] == 'student':
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    db = get_db()
+    metric = request.args.get('metric', 'attendance')
+
+    if metric == 'attendance':
+        students = db.execute("""
+            SELECT s.name, s.roll_no,
+                   COUNT(DISTINCT CASE WHEN a.status = 'Present' THEN a.id END) * 100.0 / NULLIF(COUNT(DISTINCT a.id), 0) as score
+            FROM students s
+            LEFT JOIN attendance a ON s.id = a.student_id
+            GROUP BY s.id, s.name, s.roll_no
+            ORDER BY score DESC
+        """).fetchall()
+        unit = '%'
+    elif metric == 'homework':
+        students = db.execute("""
+            SELECT s.name, s.roll_no, AVG(hs.grade) as score
+            FROM students s
+            LEFT JOIN homework_submissions hs ON s.id = hs.student_id
+            WHERE hs.grade IS NOT NULL
+            GROUP BY s.id, s.name, s.roll_no
+            ORDER BY score DESC
+        """).fetchall()
+        unit = ''
+    else:
+        students = db.execute("""
+            SELECT s.name, s.roll_no, COUNT(d.id) as score
+            FROM students s
+            LEFT JOIN doubts d ON s.id = d.student_id
+            GROUP BY s.id, s.name, s.roll_no
+            ORDER BY score DESC
+        """).fetchall()
+        unit = ' questions'
+
+    return jsonify({
+        "ok": True,
+        "students": [{
+            "name": s['name'],
+            "roll_no": s['roll_no'],
+            "score": round(s['score'] or 0, 1),
+            "unit": unit
+        } for s in students]
+    })
+
+@app.route("/api/student/submit_homework", methods=["POST"])
+@login_required
+@role_required('student')
+def api_student_submit_homework():
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "message": "Student profile not found"}), 404
+    student_id = student['id']
+
+    data = request.get_json()
+    homework_id = data.get('homework_id')
+    status = data.get('status', 'Submitted')
+
+    if not homework_id:
+        return jsonify({"ok": False, "message": "Missing homework_id"}), 400
+
+    db.execute("""
+        INSERT INTO homework_submissions (homework_id, student_id, status)
+        VALUES (?, ?, ?)
+        ON CONFLICT(homework_id, student_id)
+        DO UPDATE SET status = excluded.status
+    """, (homework_id, student_id, status))
+    db.commit()
+
+    return jsonify({"ok": True, "message": "Homework status updated!"})
+
+@app.route("/api/student/grade/<int:homework_id>")
+@login_required
+@role_required('student')
+def api_student_grade(homework_id):
+    db = get_db()
+    user_id = session['user_id']
+    student = db.execute("SELECT id FROM students WHERE user_id = ?", (user_id,)).fetchone()
+    if not student:
+        return jsonify({"ok": False, "error": "Student profile not found"}), 404
+    student_id = student['id']
+
+    submission = db.execute("""
+        SELECT grade FROM homework_submissions
+        WHERE homework_id = ? AND student_id = ?
+    """, (homework_id, student_id)).fetchone()
+
+    grade = submission['grade'] if submission else None
+
+    return jsonify({"ok": True, "grade": grade})
 
 
 if __name__ == "__main__":

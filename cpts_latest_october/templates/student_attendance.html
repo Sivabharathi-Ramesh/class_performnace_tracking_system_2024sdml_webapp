@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}My Attendance{% endblock %}
+{% block body_class %}attendance-section{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>My Attendance Record</h2>
+
+  <div class="form-row">
+    <label for="subjectFilter">Filter by Subject:</label>
+    <select id="subjectFilter">
+      <option value="">All Subjects</option>
+    </select>
+
+    <label for="monthFilter">Filter by Month:</label>
+    <select id="monthFilter">
+      <option value="">All Time</option>
+      <option value="01">January</option>
+      <option value="02">February</option>
+      <option value="03">March</option>
+      <option value="04">April</option>
+      <option value="05">May</option>
+      <option value="06">June</option>
+      <option value="07">July</option>
+      <option value="08">August</option>
+      <option value="09">September</option>
+      <option value="10">October</option>
+      <option value="11">November</option>
+      <option value="12">December</option>
+    </select>
+
+    <label for="yearFilter">Year:</label>
+    <input type="number" id="yearFilter" value="2024" min="2020" style="width: 100px;">
+
+    <button id="filterBtn" class="btn">Apply Filters</button>
+  </div>
+
+  <div class="attendance-summary" id="summary" style="margin: 20px 0; display: none;">
+    <div class="summary-cards">
+      <div class="summary-card present">
+        <h3 id="presentCount">0</h3>
+        <p>Present</p>
+      </div>
+      <div class="summary-card absent-informed">
+        <h3 id="absentInformedCount">0</h3>
+        <p>Absent (Informed)</p>
+      </div>
+      <div class="summary-card absent-uninformed">
+        <h3 id="absentUninformedCount">0</h3>
+        <p>Absent (Uninformed)</p>
+      </div>
+      <div class="summary-card total">
+        <h3 id="totalCount">0</h3>
+        <p>Total Classes</p>
+      </div>
+      <div class="summary-card percentage">
+        <h3 id="attendancePercentage">0%</h3>
+        <p>Attendance %</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="recordsArea"></div>
+</section>
+
+<script>
+let studentId = null;
+
+document.addEventListener('DOMContentLoaded', async function() {
+  try {
+    const subjectsResp = await fetch('/api/subjects');
+    const subjects = await subjectsResp.json();
+    const subjectFilter = document.getElementById('subjectFilter');
+    subjects.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = s.name;
+      subjectFilter.appendChild(opt);
+    });
+
+    await loadAttendance();
+  } catch (error) {
+    console.error('Error loading page:', error);
+  }
+});
+
+document.getElementById('filterBtn').addEventListener('click', loadAttendance);
+
+async function loadAttendance() {
+  const subjectId = document.getElementById('subjectFilter').value;
+  const month = document.getElementById('monthFilter').value;
+  const year = document.getElementById('yearFilter').value;
+
+  const params = new URLSearchParams();
+  if (subjectId) params.append('subject_id', subjectId);
+  if (month) params.append('month', month);
+  if (year) params.append('year', year);
+
+  try {
+    const response = await fetch(`/api/student/attendance?${params}`);
+    const data = await response.json();
+
+    if (data.ok) {
+      displayAttendance(data.records);
+      updateSummary(data.summary);
+    } else {
+      document.getElementById('recordsArea').innerHTML = '<p>Error loading attendance data.</p>';
+    }
+  } catch (error) {
+    console.error('Error fetching attendance:', error);
+    document.getElementById('recordsArea').innerHTML = '<p>Error loading attendance data.</p>';
+  }
+}
+
+function displayAttendance(records) {
+  const area = document.getElementById('recordsArea');
+
+  if (records.length === 0) {
+    area.innerHTML = '<p style="text-align: center; padding: 20px;">No attendance records found.</p>';
+    return;
+  }
+
+  let html = '<table class="table"><thead><tr><th>Date</th><th>Subject</th><th>Status</th></tr></thead><tbody>';
+
+  records.forEach(r => {
+    const statusClass = r.status === 'Present' ? 'status-present' :
+                       r.status === 'Absent Informed' ? 'status-absent-informed' : 'status-absent-uninformed';
+    html += `<tr><td>${r.date}</td><td>${r.subject}</td><td><span class="status-badge ${statusClass}">${r.status}</span></td></tr>`;
+  });
+
+  html += '</tbody></table>';
+  area.innerHTML = html;
+}
+
+function updateSummary(summary) {
+  const summaryDiv = document.getElementById('summary');
+  summaryDiv.style.display = 'block';
+
+  document.getElementById('presentCount').textContent = summary.present;
+  document.getElementById('absentInformedCount').textContent = summary.absent_informed;
+  document.getElementById('absentUninformedCount').textContent = summary.absent_uninformed;
+  document.getElementById('totalCount').textContent = summary.total;
+  document.getElementById('attendancePercentage').textContent = summary.percentage + '%';
+}
+</script>
+
+<style>
+.attendance-summary {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  margin: 20px 0;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 15px;
+}
+
+.summary-card {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.summary-card h3 {
+  margin: 0 0 5px 0;
+  font-size: 2em;
+}
+
+.summary-card p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.summary-card.present h3 { color: #28a745; }
+.summary-card.absent-informed h3 { color: #ffc107; }
+.summary-card.absent-uninformed h3 { color: #dc3545; }
+.summary-card.total h3 { color: #17a2b8; }
+.summary-card.percentage h3 { color: #667eea; }
+
+.status-badge {
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+.status-present {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-absent-informed {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-absent-uninformed {
+  background: #f8d7da;
+  color: #721c24;
+}
+</style>
+{% endblock %}

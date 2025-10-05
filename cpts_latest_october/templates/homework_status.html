@@ -4,23 +4,279 @@
 {% block content %}
 <section class="panel">
     <h2>My Homework Status</h2>
-    <p>Check the boxes for assignments you have completed. (Simulating as one student)</p>
+    <p>Track and submit your homework assignments</p>
+
+    <div class="filter-row" style="margin: 20px 0;">
+        <label for="statusFilter">Filter:</label>
+        <select id="statusFilter">
+            <option value="all">All Assignments</option>
+            <option value="Pending">Pending</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Graded">Graded</option>
+        </select>
+    </div>
 </section>
+
 <div class="homework-status-list">
     {% for hw in homeworks %}
-    <div class="homework-item {% if hw.student_status == 'Completed' %}completed{% endif %}" data-homework-id="{{ hw.id }}">
-        <div class="homework-details">
+    <div class="homework-item status-{{ hw.student_status|lower }}" data-homework-id="{{ hw.id }}" data-status="{{ hw.student_status }}">
+        <div class="homework-header">
             <span class="hw-subject">{{ hw.subject }}</span>
-            <p class="hw-description">{{ hw.title }}: {{ hw.description }}</p>
-            <span class="hw-due-date">Due: {{ hw.due_date }}</span>
+            <span class="status-badge status-{{ hw.student_status|lower }}">{{ hw.student_status }}</span>
         </div>
-        <div class="student-toggle">
-            <input type="checkbox" class="status-toggle" id="toggle-{{ hw.id }}" {% if hw.student_status == 'Completed' %}checked{% endif %}>
-            <label for="toggle-{{ hw.id }}">Completed</label>
+        <div class="homework-details">
+            <h3 class="hw-title">{{ hw.title }}</h3>
+            <p class="hw-description">{{ hw.description }}</p>
+            <div class="hw-meta">
+                <span class="hw-due-date">Due: {{ hw.due_date }}</span>
+            </div>
+        </div>
+        <div class="homework-actions">
+            {% if hw.student_status == 'Pending' %}
+            <button class="btn btn-submit" onclick="markAsSubmitted({{ hw.id }})">Mark as Submitted</button>
+            {% elif hw.student_status == 'Submitted' %}
+            <span class="submitted-notice">Waiting for grade...</span>
+            <button class="btn btn-secondary btn-small" onclick="markAsPending({{ hw.id }})">Unsubmit</button>
+            {% elif hw.student_status == 'Graded' %}
+            <div class="grade-display">
+                <span class="grade-label">Grade:</span>
+                <span class="grade-value" id="grade-{{ hw.id }}">-</span>
+            </div>
+            {% endif %}
         </div>
     </div>
     {% else %}
     <section class="panel"><p>No homework has been assigned yet.</p></section>
     {% endfor %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    loadGrades();
+
+    document.getElementById('statusFilter').addEventListener('change', filterHomework);
+});
+
+function filterHomework() {
+    const filter = document.getElementById('statusFilter').value;
+    const items = document.querySelectorAll('.homework-item');
+
+    items.forEach(item => {
+        const status = item.getAttribute('data-status');
+        if (filter === 'all' || status === filter) {
+            item.style.display = 'block';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+async function loadGrades() {
+    const gradeElements = document.querySelectorAll('.grade-value');
+
+    for (const elem of gradeElements) {
+        const homeworkId = elem.id.replace('grade-', '');
+        try {
+            const response = await fetch(`/api/student/grade/${homeworkId}`);
+            const data = await response.json();
+
+            if (data.ok && data.grade !== null) {
+                elem.textContent = data.grade;
+                elem.style.color = data.grade >= 80 ? '#28a745' : data.grade >= 60 ? '#ffc107' : '#dc3545';
+            } else {
+                elem.textContent = 'Not graded yet';
+            }
+        } catch (error) {
+            console.error('Error loading grade:', error);
+        }
+    }
+}
+
+async function markAsSubmitted(homeworkId) {
+    if (!confirm('Mark this homework as submitted?')) return;
+
+    try {
+        const response = await fetch('/api/student/submit_homework', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({homework_id: homeworkId, status: 'Submitted'})
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+            alert('Homework marked as submitted!');
+            location.reload();
+        } else {
+            alert('Error: ' + (data.message || 'Failed to submit'));
+        }
+    } catch (error) {
+        console.error('Error submitting homework:', error);
+        alert('Error submitting homework');
+    }
+}
+
+async function markAsPending(homeworkId) {
+    if (!confirm('Unsubmit this homework?')) return;
+
+    try {
+        const response = await fetch('/api/student/submit_homework', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({homework_id: homeworkId, status: 'Pending'})
+        });
+
+        const data = await response.json();
+
+        if (data.ok) {
+            alert('Homework marked as pending!');
+            location.reload();
+        } else {
+            alert('Error: ' + (data.message || 'Failed to update'));
+        }
+    } catch (error) {
+        console.error('Error updating homework:', error);
+        alert('Error updating homework');
+    }
+}
+</script>
+
+<style>
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.homework-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.homework-item {
+    background: white;
+    border-left: 4px solid #667eea;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.homework-item.status-pending {
+    border-left-color: #ffc107;
+}
+
+.homework-item.status-submitted {
+    border-left-color: #17a2b8;
+}
+
+.homework-item.status-graded {
+    border-left-color: #28a745;
+}
+
+.homework-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.hw-subject {
+    font-weight: 600;
+    color: #667eea;
+    font-size: 1.1em;
+}
+
+.status-badge {
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 500;
+}
+
+.status-badge.status-pending {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status-badge.status-submitted {
+    background: #d1ecf1;
+    color: #0c5460;
+}
+
+.status-badge.status-graded {
+    background: #d4edda;
+    color: #155724;
+}
+
+.hw-title {
+    margin: 10px 0;
+    color: #333;
+}
+
+.hw-description {
+    color: #666;
+    line-height: 1.6;
+    margin: 10px 0;
+}
+
+.hw-meta {
+    display: flex;
+    gap: 20px;
+    margin-top: 10px;
+}
+
+.hw-due-date {
+    color: #999;
+    font-size: 0.9em;
+}
+
+.homework-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.btn-submit {
+    background: #28a745;
+}
+
+.btn-submit:hover {
+    background: #218838;
+}
+
+.btn-small {
+    padding: 5px 15px;
+    font-size: 0.85em;
+}
+
+.submitted-notice {
+    color: #17a2b8;
+    font-weight: 500;
+    font-style: italic;
+}
+
+.grade-display {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 5px;
+}
+
+.grade-label {
+    font-weight: 500;
+    color: #666;
+}
+
+.grade-value {
+    font-size: 1.5em;
+    font-weight: bold;
+}
+</style>
 {% endblock %}

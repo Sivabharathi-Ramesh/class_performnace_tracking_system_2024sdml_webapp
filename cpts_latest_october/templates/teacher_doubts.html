@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+{% block title %}Manage Student Doubts{% endblock %}
+{% block body_class %}homework-section{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Student Questions & Doubts</h2>
+
+  <div class="form-row">
+    <label for="statusFilter">Status:</label>
+    <select id="statusFilter">
+      <option value="all">All Questions</option>
+      <option value="unanswered">Unanswered Only</option>
+      <option value="answered">Answered Only</option>
+    </select>
+
+    <label for="homeworkFilter">Homework:</label>
+    <select id="homeworkFilter">
+      <option value="">All Homework</option>
+    </select>
+
+    <button id="filterBtn" class="btn">Filter</button>
+  </div>
+
+  <div class="stats-bar" style="margin: 20px 0;">
+    <div class="stat-item">
+      <span class="stat-label">Total Questions:</span>
+      <span class="stat-value" id="totalDoubts">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Unanswered:</span>
+      <span class="stat-value unanswered" id="unansweredCount">0</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Answered:</span>
+      <span class="stat-value answered" id="answeredCount">0</span>
+    </div>
+  </div>
+
+  <div id="doubtsArea"></div>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', async function() {
+  try {
+    const response = await fetch('/api/homework');
+    const homeworks = await response.json();
+
+    const homeworkFilter = document.getElementById('homeworkFilter');
+    homeworks.forEach(hw => {
+      const opt = document.createElement('option');
+      opt.value = hw.id;
+      opt.textContent = `${hw.subject} - ${hw.title}`;
+      homeworkFilter.appendChild(opt);
+    });
+
+    await loadDoubts();
+  } catch (error) {
+    console.error('Error loading page:', error);
+  }
+});
+
+document.getElementById('filterBtn').addEventListener('click', loadDoubts);
+
+async function loadDoubts() {
+  const status = document.getElementById('statusFilter').value;
+  const homeworkId = document.getElementById('homeworkFilter').value;
+
+  const params = new URLSearchParams();
+  if (status !== 'all') params.append('status', status);
+  if (homeworkId) params.append('homework_id', homeworkId);
+
+  try {
+    const response = await fetch(`/api/teacher/doubts?${params}`);
+    const data = await response.json();
+
+    if (data.ok) {
+      updateStats(data.stats);
+      displayDoubts(data.doubts);
+    } else {
+      document.getElementById('doubtsArea').innerHTML = '<p>Error loading doubts.</p>';
+    }
+  } catch (error) {
+    console.error('Error fetching doubts:', error);
+  }
+}
+
+function updateStats(stats) {
+  document.getElementById('totalDoubts').textContent = stats.total;
+  document.getElementById('unansweredCount').textContent = stats.unanswered;
+  document.getElementById('answeredCount').textContent = stats.answered;
+}
+
+function displayDoubts(doubts) {
+  const area = document.getElementById('doubtsArea');
+
+  if (doubts.length === 0) {
+    area.innerHTML = '<p style="text-align: center; padding: 20px;">No questions found.</p>';
+    return;
+  }
+
+  let html = '<div class="doubts-list">';
+
+  doubts.forEach(doubt => {
+    const answered = doubt.answer ? 'answered' : 'unanswered';
+    html += `
+      <div class="doubt-card ${answered}">
+        <div class="doubt-header">
+          <div>
+            <span class="student-name">👤 ${doubt.student_name}</span>
+            <span class="homework-title">${doubt.homework_title}</span>
+          </div>
+          <span class="doubt-date">${doubt.asked_date}</span>
+        </div>
+        <div class="doubt-question">
+          <strong>Question:</strong> ${doubt.question}
+        </div>
+        ${doubt.answer ? `
+          <div class="doubt-answer">
+            <strong>Your Answer:</strong> ${doubt.answer}
+            <button class="btn-small btn-edit" onclick="editAnswer(${doubt.id}, '${doubt.answer.replace(/'/g, "\\'")}')">Edit Answer</button>
+          </div>
+        ` : `
+          <div class="answer-form">
+            <textarea id="answer-${doubt.id}" placeholder="Type your answer here..." rows="3"></textarea>
+            <button class="btn" onclick="submitAnswer(${doubt.id})">Submit Answer</button>
+          </div>
+        `}
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  area.innerHTML = html;
+}
+
+async function submitAnswer(doubtId) {
+  const answerText = document.getElementById(`answer-${doubtId}`).value.trim();
+
+  if (!answerText) {
+    alert('Please enter an answer.');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/doubts/answer', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({doubt_id: doubtId, answer: answerText})
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      alert('Answer submitted successfully!');
+      await loadDoubts();
+    } else {
+      alert('Error submitting answer.');
+    }
+  } catch (error) {
+    console.error('Error submitting answer:', error);
+    alert('Error submitting answer.');
+  }
+}
+
+async function editAnswer(doubtId, currentAnswer) {
+  const newAnswer = prompt('Edit your answer:', currentAnswer);
+  if (!newAnswer || newAnswer === currentAnswer) return;
+
+  try {
+    const response = await fetch('/api/doubts/answer', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({doubt_id: doubtId, answer: newAnswer})
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      alert('Answer updated successfully!');
+      await loadDoubts();
+    } else {
+      alert('Error updating answer.');
+    }
+  } catch (error) {
+    console.error('Error updating answer:', error);
+    alert('Error updating answer.');
+  }
+}
+</script>
+
+<style>
+.stats-bar {
+  display: flex;
+  gap: 30px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.stats-bar .stat-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stats-bar .stat-label {
+  font-weight: 500;
+  color: #666;
+}
+
+.stats-bar .stat-value {
+  font-size: 1.5em;
+  font-weight: bold;
+  color: #667eea;
+}
+
+.stats-bar .stat-value.unanswered {
+  color: #dc3545;
+}
+
+.stats-bar .stat-value.answered {
+  color: #28a745;
+}
+
+.doubts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.doubt-card {
+  background: white;
+  border-left: 4px solid #dc3545;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.doubt-card.answered {
+  border-left-color: #28a745;
+}
+
+.doubt-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.student-name {
+  font-weight: 600;
+  color: #667eea;
+  margin-right: 15px;
+}
+
+.homework-title {
+  color: #666;
+  font-size: 0.9em;
+}
+
+.doubt-date {
+  font-size: 0.9em;
+  color: #999;
+}
+
+.doubt-question {
+  margin: 15px 0;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 5px;
+  line-height: 1.6;
+}
+
+.doubt-answer {
+  margin: 15px 0;
+  padding: 15px;
+  background: #d4edda;
+  border-radius: 5px;
+  line-height: 1.6;
+}
+
+.answer-form {
+  margin-top: 15px;
+}
+
+.answer-form textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  font-family: inherit;
+}
+
+.btn-small {
+  padding: 5px 15px;
+  font-size: 0.85em;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.btn-edit {
+  background: #17a2b8;
+  color: white;
+}
+
+.btn-edit:hover {
+  background: #138496;
+}
+</style>
+{% endblock %}
