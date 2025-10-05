@@ -1,4 +1,5 @@
 Class Performance Tracking System
+
 This web application provides a comprehensive system for tracking class performance, including attendance, homework, and student progress. It is designed for use by administrators, teachers, and students, with different levels of access and functionality for each role.
 
 Features
